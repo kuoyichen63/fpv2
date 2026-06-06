@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FPV 無人機飛行訓練</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Courier New', Courier, monospace;
+            touch-action: none; /* 防止手機滑動縮放 */
+            user-select: none;
+        }
+
+        #game-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* FPV OSD (On-Screen Display) UI */
+        #osd-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            color: #fff;
+            text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+        }
+
+        .osd-text {
+            position: absolute;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        #osd-top-left { top: 20px; left: 180px; }
+        #osd-top-right { top: 20px; right: 20px; text-align: right; }
+        #osd-bottom-left { bottom: 20px; left: 20px; }
+        #osd-bottom-right { bottom: 20px; right: 20px; text-align: right; }
+        #osd-center {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        /* 十字準星 */
+        .crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .crosshair-line-h {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 40px;
+            height: 2px;
+            background-color: rgba(255, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+        .crosshair-line-v {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px;
+            height: 40px;
+            background-color: rgba(255, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+
+        /* 姿態儀 (Pitch Ladder) */
+        #pitch-ladder {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 200px;
+            height: 300px;
+            transform: translate(-50%, -50%);
+            overflow: hidden;
+        }
+        #pitch-lines {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            transition: transform 0.05s linear;
+        }
+        .pitch-line {
+            width: 100%;
+            height: 40px; /* 每 10 度的間距 */
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid rgba(255,255,255,0.5);
+            box-sizing: border-box;
+        }
+        .pitch-line::before, .pitch-line::after {
+            content: attr(data-angle);
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+        }
+        .pitch-line-center {
+            width: 40%;
+            margin: 0 auto;
+            border-bottom: 2px solid rgba(0,255,0,0.8);
+            position: relative;
+            top: 2px;
+        }
+
+        /* 雷達圖 */
+        #radar-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 150px;
+            height: 150px;
+            background-color: rgba(0, 0, 0, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            overflow: hidden;
+        }
+        #radar-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 啟動畫面 */
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 100;
+        }
+        #start-btn {
+            padding: 15px 30px;
+            font-size: 24px;
+            background-color: #d32f2f;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin-bottom: 20px;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7); }
+            50% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(211, 47, 47, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 47, 47, 0); }
+        }
+        .instructions {
+            text-align: left;
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 10px;
+            line-height: 1.6;
+        }
+
+        /* 虛擬搖桿 (手機版顯示) */
+        .joystick-zone {
+            position: absolute;
+            bottom: 20px;
+            width: 120px;
+            height: 120px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            display: none; /* 預設隱藏，檢測到觸控時顯示 */
+            pointer-events: none;
+        }
+        .joystick-knob {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 40px;
+            height: 40px;
+            background-color: rgba(255, 255, 255, 0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+        #joystick-left { left: 40px; }
+        #joystick-right { right: 40px; }
+
+        @media (max-width: 768px) {
+            .instructions { font-size: 14px; }
+            .joystick-zone { display: block; }
+        }
+
+        .crt-effect {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+            z-index: 50;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container"></div>
+
+<!-- FPV OSD UI -->
+<div id="osd-layer">
+    <div id="radar-container">
+        <canvas id="radar-canvas" width="150" height="150"></canvas>
+    </div>
+    
+    <div class="osd-text" id="osd-top-left">
+        <span style="color:#0f0;">BAT: 15.2V</span><br>
+        <span style="color:#0f0;">REC: 00:00:00</span>
+    </div>
+    <div class="osd-text" id="osd-top-right">
+        <span>FPS: <span id="fps-display">60</span></span><br>
+        <span>LINK: 99%</span>
+    </div>
+    <div class="osd-text" id="osd-bottom-left">
+        <span>ALT: <span id="alt-display">0</span> m</span><br>
+        <span>SPD: <span id="spd-display">0</span> km/h</span>
+    </div>
+    <div class="osd-text" id="osd-bottom-right">
+        <span>MODE: ACRO</span><br>
+        <span>THR: <span id="thr-display">0</span>%</span>
+    </div>
+
+    <!-- 姿態儀 -->
+    <div id="pitch-ladder">
+        <div id="pitch-lines">
+            <!-- 動態生成 -->
+        </div>
+    </div>
+
+    <!-- 十字準星 -->
+    <div class="crosshair">
+        <div class="crosshair-line-h"></div>
+        <div class="crosshair-line-v"></div>
+    </div>
+</div>
+
+<!-- 復古掃描線效果 -->
+<div class="crt-effect"></div>
+
+<!-- 虛擬搖桿 (觸控螢幕使用) -->
+<div class="joystick-zone" id="joystick-left">
+    <div class="joystick-knob" id="knob-left"></div>
+</div>
+<div class="joystick-zone" id="joystick-right">
+    <div class="joystick-knob" id="knob-right"></div>
+</div>
+
+<!-- 啟動畫面 -->
+<div id="start-screen">
+    <button id="start-btn">啟動 FPV 系統</button>
+    <div class="instructions">
+        <h3>操作指南</h3>
+        <p><strong>電腦 (鍵盤) - 模擬 Mode 2 遙控器:</strong></p>
+        <ul>
+            <li><code>W</code> / <code>S</code> : 油門 (上升 / 下降)</li>
+            <li><code>A</code> / <code>D</code> : 偏航 (左轉 / 右轉)</li>
+            <li><code>↑</code> / <code>↓</code> : 俯仰 (向前 / 向後飛)</li>
+            <li><code>←</code> / <code>→</code> : 側傾 (向左 / 向右飛)</li>
+        </ul>
+        <p><strong>手機/平板 (觸控):</strong></p>
+        <ul>
+            <li>螢幕左半邊滑動 : 控制油門與偏航</li>
+            <li>螢幕右半邊滑動 : 控制俯仰與側傾</li>
+        </ul>
+        <p><em>戴上耳機體驗沉浸式馬達音效。</em></p>
+    </div>
+</div>
+
+<script>
+/**
+ * FPV Drone Simulator System
+ */
+
+// --- 系統變數 ---
+let scene, camera, renderer;
+let clock = new THREE.Clock();
+let droneGroup;
+let props = [];
+let buildings = [];
+let cars = [];
+let roadLanes = [];
+
+// 音效系統
+let audioCtx, oscillator, gainNode;
+let soundEnabled = false;
+
+// 物理與控制變數
+const droneState = {
+    position: new THREE.Vector3(0, 10, 0),
+    velocity: new THREE.Vector3(0, 0, 0),
+    rotation: new THREE.Euler(0, 0, 0, 'YXZ'), // Yaw, Pitch, Roll
+    quaternion: new THREE.Quaternion(),
+    
+    // 輸入值 (-1 到 1)
+    inputThrottle: 0,
+    inputYaw: 0,
+    inputPitch: 0,
+    inputRoll: 0,
+};
+
+// 物理參數
+const physicsConfig = {
+    gravity: 9.81 * 2, // 增加重力感
+    mass: 0.6, // kg
+    maxThrust: 35, // 最大推力
+    drag: 0.95, // 空氣阻力 (速度衰減)
+    rotationalSpeed: 2.5, // 旋轉靈敏度
+    maxTilt: Math.PI / 2.5 // 最大傾角
+};
+
+// --- 初始化 Three.js ---
+function init() {
+    const container = document.getElementById('game-container');
+
+    // 場景
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // 天空藍
+    scene.fog = new THREE.FogExp2(0x87CEEB, 0.005); // 加入霧氣增加距離感
+
+    // 攝影機 (FPV視角, 超廣角)
+    camera = new THREE.PerspectiveCamera(100, window.innerWidth / window.innerHeight, 0.1, 1000);
+    
+    // 無人機本體 Group
+    droneGroup = new THREE.Group();
+    droneGroup.position.copy(droneState.position);
+    scene.add(droneGroup);
+    
+    // 將攝影機綁定到無人機上
+    droneGroup.add(camera);
+
+    // 渲染器
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    container.appendChild(renderer.domElement);
+
+    // 光源
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffdfb0, 0.8); // 稍微偏黃的夕陽光
+    dirLight.position.set(100, 200, 50);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 200;
+    dirLight.shadow.camera.bottom = -200;
+    dirLight.shadow.camera.left = -200;
+    dirLight.shadow.camera.right = 200;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    scene.add(dirLight);
+
+    // 建立環境
+    buildEnvironment();
+
+    // 建立無人機部件 (視野前方的螺旋槳和支架)
+    buildDroneProps();
+
+    // 事件監聽
+    window.addEventListener('resize', onWindowResize);
+    setupControls();
+    
+    // 建立姿態儀刻度
+    createPitchLadder();
+
+    // 開始渲染迴圈
+    renderer.setAnimationLoop(animate);
+}
+
+// --- 建立環境 (城市與道路) ---
+function buildEnvironment() {
+    // 地面
+    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x333333 }); // 深灰柏油路色
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // 網格生成城市
+    const gridSize = 40;
+    const blockSize = 30;
+    
+    // 建立窗戶紋理
+    const windowTexture = createWindowTexture();
+    windowTexture.wrapS = THREE.RepeatWrapping;
+    windowTexture.wrapT = THREE.RepeatWrapping;
+
+    // 建築材質
+    const wallMaterial = new THREE.MeshLambertMaterial({ map: windowTexture });
+    const roofMaterial = new THREE.MeshLambertMaterial({ color: 0x555555 });
+    const materials = [
+        wallMaterial, // right
+        wallMaterial, // left
+        roofMaterial, // top
+        roofMaterial, // bottom
+        wallMaterial, // front
+        wallMaterial  // back
+    ];
+
+    const buildingCount = 400;
+    let instanceId = 0;
+
+    for (let x = -500; x < 500; x += gridSize) {
+        for (let z = -500; z < 500; z += gridSize) {
+            // 留出中間的空地作為出發點
+            if (Math.abs(x) < 60 && Math.abs(z) < 60) continue;
+
+            // 隨機決定是否建樓 (留一些空地)
+            if (Math.random() > 0.2 && instanceId < buildingCount) {
+                const height = 10 + Math.random() * 80; // 高度 10~90m
+                const width = blockSize * (0.6 + Math.random() * 0.4);
+                const depth = blockSize * (0.6 + Math.random() * 0.4);
+
+                const boxGeo = new THREE.BoxGeometry(width, height, depth);
+                
+                // 調整紋理重複次數以適應建築大小，避免拉伸
+                wallMaterial.map.repeat.set(width / 5, height / 5);
+
+                const building = new THREE.Mesh(boxGeo, materials);
+                building.position.set(x + gridSize/2, height/2, z + gridSize/2);
+                building.castShadow = true;
+                building.receiveShadow = true;
+                scene.add(building);
+
+                // 記錄建築資料給雷達用
+                buildings.push({ x: x + gridSize/2, z: z + gridSize/2, w: width, d: depth });
+                
+                instanceId++;
+            } else if (Math.random() > 0.5) {
+                // 記錄道路中心線，用來生成車輛
+                roadLanes.push({ x: x, z: z, isVertical: Math.random() > 0.5 });
+            }
+        }
+    }
+    
+    // 建立車輛
+    buildCars();
+}
+
+// --- 生成窗戶紋理的輔助函式 ---
+function createWindowTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+
+    // 牆壁底色
+    ctx.fillStyle = '#4a5a6a';
+    ctx.fillRect(0, 0, 64, 64);
+
+    // 窗戶顏色 (亮黃色表示開燈)
+    ctx.fillStyle = '#ffffaa';
+    // 畫兩個窗戶
+    ctx.fillRect(8, 8, 20, 30);
+    ctx.fillRect(36, 8, 20, 30);
+    
+    // 窗框線條
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(8, 8, 20, 30);
+    ctx.strokeRect(36, 8, 20, 30);
+
+    // 窗戶中間的十字線
+    ctx.beginPath();
+    ctx.moveTo(18, 8); ctx.lineTo(18, 38);
+    ctx.moveTo(8, 23); ctx.lineTo(28, 23);
+    ctx.moveTo(46, 8); ctx.lineTo(46, 38);
+    ctx.moveTo(36, 23); ctx.lineTo(56, 23);
+    ctx.stroke();
+
+    return new THREE.CanvasTexture(canvas);
+}
+
+function buildCars() {
+    const carGeo = new THREE.BoxGeometry(2, 1.5, 4);
+    const carMat = new THREE.MeshLambertMaterial({ color: 0xff4444 });
+    const carMat2 = new THREE.MeshLambertMaterial({ color: 0xeeeeee });
+
+    for (let i = 0; i < 50; i++) {
+        if (roadLanes.length === 0) break;
+        
+        const lane = roadLanes[Math.floor(Math.random() * roadLanes.length)];
+        const isCar1 = Math.random() > 0.5;
+        const car = new THREE.Mesh(carGeo, isCar1 ? carMat : carMat2);
+        
+        car.castShadow = true;
+        car.position.y = 0.75;
+        
+        // 設定初始位置與方向
+        if (lane.isVertical) {
+            car.position.x = lane.x + (Math.random() * 6 - 3); // 在車道內隨機偏移
+            car.position.z = (Math.random() - 0.5) * 1000;
+            car.userData = {
+                dir: new THREE.Vector3(0, 0, Math.random() > 0.5 ? 1 : -1),
+                speed: 15 + Math.random() * 15 // 速度
+            };
+        } else {
+            car.position.x = (Math.random() - 0.5) * 1000;
+            car.position.z = lane.z + (Math.random() * 6 - 3);
+            car.rotation.y = Math.PI / 2;
+            car.userData = {
+                dir: new THREE.Vector3(Math.random() > 0.5 ? 1 : -1, 0, 0),
+                speed: 15 + Math.random() * 15
+            };
+        }
+        
+        scene.add(car);
+        cars.push(car);
+    }
+}
+
+// --- 建立無人機視野部件 (螺旋槳與支架) ---
+function buildDroneProps() {
+    const armMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+    const propMat = new THREE.MeshLambertMaterial({ color: 0x111111 });
+
+    // 建立單個螺旋槳臂總成的函式
+    function createPropellerArm(motorPos) {
+        const armGroup = new THREE.Group();
+
+        // 支撐臂：從畫面下方外側延伸到馬達位置，營造朝向相機(我)的感覺
+        const basePos = new THREE.Vector3(motorPos.x * 0.3, -1.2, 0.5);
+        const distance = basePos.distanceTo(motorPos);
+        const armGeo = new THREE.BoxGeometry(0.1, 0.05, distance);
+        const arm = new THREE.Mesh(armGeo, armMat);
+        
+        // 將支撐臂放置在中點，並計算方向使其精準連接起點與終點
+        arm.position.copy(basePos).lerp(motorPos, 0.5);
+        const direction = new THREE.Vector3().subVectors(motorPos, basePos).normalize();
+        arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
+        
+        armGroup.add(arm);
+
+        // 螺旋槳旋轉組
+        const propSpinner = new THREE.Group();
+        propSpinner.position.copy(motorPos);
+        
+        // 槳葉 (十字交叉)
+        const bladeGeo = new THREE.BoxGeometry(1.8, 0.02, 0.15);
+        const blade1 = new THREE.Mesh(bladeGeo, propMat);
+        const blade2 = blade1.clone();
+        blade2.rotation.y = Math.PI / 2; // 旋轉形成十字對稱
+
+        propSpinner.add(blade1);
+        propSpinner.add(blade2);
+        
+        // 馬達外殼
+        const motorGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.2, 16);
+        const motor = new THREE.Mesh(motorGeo, new THREE.MeshLambertMaterial({color: 0x888888}));
+        propSpinner.add(motor);
+
+        // 將組件加入
+        armGroup.add(propSpinner);
+        
+        // 加入 props 陣列以便動畫旋轉
+        props.push(propSpinner);
+        
+        return armGroup;
+    }
+
+    // 建立左前和右前兩個螺旋槳臂
+    // 位置相對於攝影機 (x:左右, y:上下, z:前後)
+    const leftArm = createPropellerArm(new THREE.Vector3(-1.5, -0.8, -2));
+    const rightArm = createPropellerArm(new THREE.Vector3(1.5, -0.8, -2));
+
+    camera.add(leftArm);
+    camera.add(rightArm);
+}
+
+// --- 控制與輸入處理 ---
+const keys = { w: false, s: false, a: false, d: false, up: false, down: false, left: false, right: false };
+
+function setupControls() {
+    // 鍵盤控制
+    window.addEventListener('keydown', (e) => {
+        switch(e.code) {
+            case 'KeyW': keys.w = true; break;
+            case 'KeyS': keys.s = true; break;
+            case 'KeyA': keys.a = true; break;
+            case 'KeyD': keys.d = true; break;
+            case 'ArrowUp': keys.up = true; break;
+            case 'ArrowDown': keys.down = true; break;
+            case 'ArrowLeft': keys.left = true; break;
+            case 'ArrowRight': keys.right = true; break;
+        }
+    });
+
+    window.addEventListener('keyup', (e) => {
+        switch(e.code) {
+            case 'KeyW': keys.w = false; break;
+            case 'KeyS': keys.s = false; break;
+            case 'KeyA': keys.a = false; break;
+            case 'KeyD': keys.d = false; break;
+            case 'ArrowUp': keys.up = false; break;
+            case 'ArrowDown': keys.down = false; break;
+            case 'ArrowLeft': keys.left = false; break;
+            case 'ArrowRight': keys.right = false; break;
+        }
+    });
+
+    // 觸控控制 (虛擬搖桿)
+    const leftZone = document.getElementById('joystick-left');
+    const rightZone = document.getElementById('joystick-right');
+    const leftKnob = document.getElementById('knob-left');
+    const rightKnob = document.getElementById('knob-right');
+
+    let leftTouchId = null;
+    let rightTouchId = null;
+
+    const handleTouch = (e) => {
+        e.preventDefault();
+        const halfWidth = window.innerWidth / 2;
+
+        // 重置輸入
+        let currentLeftActive = false;
+        let currentRightActive = false;
+
+        for (let i = 0; i < e.touches.length; i++) {
+            const touch = e.touches[i];
+            
+            if (touch.clientX < halfWidth) {
+                // 左半部: 油門 (Y), 偏航 (X)
+                currentLeftActive = true;
+                leftZone.style.display = 'block';
+                
+                // 動態移動搖桿底座到觸控位置 (只在第一次觸控時)
+                if (leftTouchId !== touch.identifier) {
+                    leftZone.style.left = (touch.clientX - 60) + 'px';
+                    leftZone.style.top = (touch.clientY - 60) + 'px';
+                    leftZone.style.bottom = 'auto';
+                    leftTouchId = touch.identifier;
+                }
+
+                const rect = leftZone.getBoundingClientRect();
+                const centerX = rect.left + 60;
+                const centerY = rect.top + 60;
+                
+                let dx = touch.clientX - centerX;
+                let dy = touch.clientY - centerY;
+                const distance = Math.min(Math.hypot(dx, dy), 60);
+                const angle = Math.atan2(dy, dx);
+                
+                dx = Math.cos(angle) * distance;
+                dy = Math.sin(angle) * distance;
+
+                leftKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                
+                // 轉換為 -1 到 1 的輸入 (-dy 因為螢幕 Y 軸向下)
+                droneState.inputYaw = dx / 60;
+                droneState.inputThrottle = -dy / 60; 
+
+            } else {
+                // 右半部: 俯仰 (Y), 側傾 (X)
+                currentRightActive = true;
+                rightZone.style.display = 'block';
+
+                if (rightTouchId !== touch.identifier) {
+                    rightZone.style.left = (touch.clientX - 60) + 'px';
+                    rightZone.style.top = (touch.clientY - 60) + 'px';
+                    rightZone.style.bottom = 'auto';
+                    rightTouchId = touch.identifier;
+                }
+
+                const rect = rightZone.getBoundingClientRect();
+                const centerX = rect.left + 60;
+                const centerY = rect.top + 60;
+                
+                let dx = touch.clientX - centerX;
+                let dy = touch.clientY - centerY;
+                const distance = Math.min(Math.hypot(dx, dy), 60);
+                const angle = Math.atan2(dy, dx);
+                
+                dx = Math.cos(angle) * distance;
+                dy = Math.sin(angle) * distance;
+
+                rightKnob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+                
+                // 轉換為 -1 到 1 的輸入 (-dy 因為向上是前進)
+                droneState.inputRoll = dx / 60;
+                droneState.inputPitch = -dy / 60;
+            }
+        }
+
+        // 如果手指離開，重置該側的輸入與搖桿位置
+        if (!currentLeftActive) {
+            leftTouchId = null;
+            leftZone.style.display = '';
+            leftKnob.style.transform = 'translate(-50%, -50%)';
+            droneState.inputYaw = 0;
+            // 真實無人機油門不會自動回中，但觸控為了方便先讓他回中，或者保留最後值。這裡選擇逐漸歸零(在 update 中處理)或直接歸零。
+            droneState.inputThrottle = 0; 
+        }
+        if (!currentRightActive) {
+            rightTouchId = null;
+            rightZone.style.display = '';
+            rightKnob.style.transform = 'translate(-50%, -50%)';
+            droneState.inputRoll = 0;
+            droneState.inputPitch = 0;
+        }
+    };
+
+    window.addEventListener('touchstart', handleTouch, { passive: false });
+    window.addEventListener('touchmove', handleTouch, { passive: false });
+    window.addEventListener('touchend', handleTouch, { passive: false });
+    
+    // 啟動按鈕
+    document.getElementById('start-btn').addEventListener('click', () => {
+        document.getElementById('start-screen').style.display = 'none';
+        initAudio();
+        // 如果是電腦，隱藏鼠標
+        if (window.innerWidth > 768) {
+            document.body.requestPointerLock = document.body.requestPointerLock || document.body.mozRequestPointerLock;
+            if(document.body.requestPointerLock) document.body.requestPointerLock();
+        }
+    });
+}
+
+function processInputs() {
+    // 如果沒有觸控輸入，則讀取鍵盤
+    if (!('ontouchstart' in window)) {
+        // 油門 (W/S) - 需要自己維持或按住
+        if (keys.w) droneState.inputThrottle = 1;
+        else if (keys.s) droneState.inputThrottle = -1;
+        else droneState.inputThrottle = 0;
+
+        // 偏航 (A/D)
+        if (keys.a) droneState.inputYaw = -1;
+        else if (keys.d) droneState.inputYaw = 1;
+        else droneState.inputYaw = 0;
+
+        // 俯仰 (Up/Down)
+        if (keys.up) droneState.inputPitch = 1;
+        else if (keys.down) droneState.inputPitch = -1;
+        else droneState.inputPitch = 0;
+
+        // 側傾 (Left/Right)
+        if (keys.left) droneState.inputRoll = -1;
+        else if (keys.right) droneState.inputRoll = 1;
+        else droneState.inputRoll = 0;
+    }
+}
+
+// --- 音效系統 (馬達聲) ---
+function initAudio() {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+        
+        oscillator = audioCtx.createOscillator();
+        oscillator.type = 'sawtooth'; // 鋸齒波比較像馬達聲
+        
+        // 使用濾波器削弱刺耳的高頻
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 1000;
+
+        gainNode = audioCtx.createGain();
+        gainNode.gain.value = 0.1; // 初始音量小一點
+
+        oscillator.connect(filter);
+        filter.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        
+        oscillator.start();
+        soundEnabled = true;
+    } catch(e) {
+        console.log("Web Audio API 不支援");
+    }
+}
+
+function updateAudio() {
+    if (!soundEnabled || !oscillator) return;
+    
+    // 基礎頻率 150Hz，加上油門推力造成的頻率變化
+    // 加速時頻率變高 (模擬真實四軸)
+    const baseFreq = 150;
+    // 讓油門輸入值(0~1之間)影響頻率
+    const throttleMagnitude = Math.abs(droneState.inputThrottle);
+    const targetFreq = baseFreq + (throttleMagnitude * 300) + (Math.abs(droneState.inputPitch) + Math.abs(droneState.inputRoll)) * 50;
+    
+    // 平滑過渡頻率
+    oscillator.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
+    
+    // 音量變化
+    const targetVolume = 0.05 + throttleMagnitude * 0.15;
+    gainNode.gain.setTargetAtTime(targetVolume, audioCtx.currentTime, 0.1);
+}
+
+// --- UI 與 OSD 更新 ---
+function createPitchLadder() {
+    const linesContainer = document.getElementById('pitch-lines');
+    let html = '';
+    // 生成 -90 到 90 度的線
+    for (let i = 90; i >= -90; i -= 10) {
+        if (i === 0) {
+            html += `<div class="pitch-line"><div class="pitch-line-center"></div></div>`;
+        } else {
+            html += `<div class="pitch-line" data-angle="${i > 0 ? '+'+i : i}"></div>`;
+        }
+    }
+    linesContainer.innerHTML = html;
+}
+
+let lastTime = performance.now();
+let frames = 0;
+
+function updateOSD() {
+    const time = performance.now();
+    frames++;
+    if (time >= lastTime + 1000) {
+        document.getElementById('fps-display').innerText = Math.round((frames * 1000) / (time - lastTime));
+        frames = 0;
+        lastTime = time;
+    }
+
+    // 更新高度 (Y軸, 假設 1 單位 = 1 公尺)
+    document.getElementById('alt-display').innerText = Math.max(0, droneState.position.y).toFixed(1);
+    
+    // 更新速度 (km/h)
+    const speed = droneState.velocity.length() * 3.6; 
+    document.getElementById('spd-display').innerText = speed.toFixed(0);
+
+    // 更新油門百分比
+    const thr = Math.max(0, (droneState.inputThrottle + 1) / 2 * 100); // 將 -1~1 轉為 0~100 (假設左搖桿在下是0)
+    // 但在無人機模擬中，我們通常把搖桿置中當成懸停推力。為了簡單呈現，顯示原始輸入的絕對值百分比
+    const displayThr = Math.abs(droneState.inputThrottle * 100);
+    document.getElementById('thr-display').innerText = displayThr.toFixed(0);
+
+    // 更新姿態儀 (Pitch Ladder)
+    const pitchLines = document.getElementById('pitch-lines');
+    // 計算俯仰角 (度)
+    const pitchDeg = THREE.MathUtils.radToDeg(droneState.rotation.x);
+    // 計算側傾角 (度)
+    const rollDeg = THREE.MathUtils.radToDeg(droneState.rotation.z);
+    
+    // 移動 Y 軸對應俯仰 (每 10 度 40px)
+    const yOffset = pitchDeg * 4; 
+    
+    pitchLines.style.transform = `translateY(${yOffset}px) rotate(${-rollDeg}deg)`;
+}
+
+function updateRadar() {
+    const canvas = document.getElementById('radar-canvas');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radarScale = 0.2; // 雷達縮放比例 (值越小範圍越大)
+
+    // 清空畫布
+    ctx.clearRect(0, 0, width, height);
+
+    // 繪製掃描線背景
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, width/2, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 20, 0, 0.5)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+    ctx.stroke();
+
+    // 十字線
+    ctx.beginPath();
+    ctx.moveTo(centerX, 0); ctx.lineTo(centerX, height);
+    ctx.moveTo(0, centerY); ctx.lineTo(width, centerY);
+    ctx.stroke();
+
+    // 繪製建築物 (綠色方塊)
+    ctx.fillStyle = 'rgba(0, 255, 0, 0.5)';
+    for (let b of buildings) {
+        // 計算相對於無人機的位置
+        const dx = b.x - droneState.position.x;
+        const dz = b.z - droneState.position.z;
+        
+        // 只繪製在雷達範圍內的
+        if (Math.abs(dx) * radarScale < centerX && Math.abs(dz) * radarScale < centerY) {
+            const rx = centerX + dx * radarScale;
+            const ry = centerY + dz * radarScale; // 3D 的 Z 對應 2D 的 Y
+            ctx.fillRect(rx - (b.w*radarScale)/2, ry - (b.d*radarScale)/2, b.w*radarScale, b.d*radarScale);
+        }
+    }
+
+    // 繪製車輛 (紅色小點)
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+    for (let car of cars) {
+        const dx = car.position.x - droneState.position.x;
+        const dz = car.position.z - droneState.position.z;
+        if (Math.abs(dx) * radarScale < centerX && Math.abs(dz) * radarScale < centerY) {
+            const rx = centerX + dx * radarScale;
+            const ry = centerY + dz * radarScale;
+            ctx.beginPath();
+            ctx.arc(rx, ry, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // 繪製無人機自己 (中心白色三角形)
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    // 根據偏航角旋轉圖示
+    ctx.rotate(-droneState.rotation.y);
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(-4, 4);
+    ctx.lineTo(4, 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+// --- 主要物理與渲染迴圈 ---
+function animate() {
+    const dt = Math.min(clock.getDelta(), 0.1); // 限制最大 delta 避免暫停回來後數值爆掉
+
+    processInputs();
+
+    // 1. 更新無人機旋轉姿態 (ACRO 模式，輸入決定旋轉「速率」)
+    // 簡單模擬：搖桿輸入轉換為目標傾角，加上彈性恢復
+    const targetPitch = droneState.inputPitch * physicsConfig.maxTilt;
+    const targetRoll = droneState.inputRoll * physicsConfig.maxTilt;
+    
+    // 平滑插值到目標角度 (模擬物理慣性)
+    droneState.rotation.x += (targetPitch - droneState.rotation.x) * 10 * dt;
+    droneState.rotation.z += (-targetRoll - droneState.rotation.z) * 10 * dt; // 畫面右傾代表Z軸負向
+    
+    // 偏航是持續旋轉的
+    droneState.rotation.y -= droneState.inputYaw * physicsConfig.rotationalSpeed * dt;
+
+    // 將 Euler 轉換為 Quaternion 更新 Group
+    droneState.quaternion.setFromEuler(droneState.rotation);
+    droneGroup.quaternion.copy(droneState.quaternion);
+
+    // 2. 計算推力與重力
+    // 真實無人機推力永遠是沿著自己本體的 Y 軸 (向上)
+    // 基本懸停需要抵銷重力。假設搖桿中位(輸入=0)為懸停狀態，上推為加速，下拉為減速
+    let throttleFactor = droneState.inputThrottle; 
+    // 若無鍵盤/觸控輸入，稍微給個預設推力讓掉落不那麼快，或者完全物理
+    // 為了遊戲性，讓 throttle = 0 時有足夠推力抵銷重力(懸停)
+    let thrustMag = physicsConfig.gravity * physicsConfig.mass; // 懸停基礎
+    thrustMag += throttleFactor * physicsConfig.maxThrust; // 加上玩家輸入
+
+    // 推力向量 (局部 Y 軸轉到世界座標)
+    const thrust = new THREE.Vector3(0, 1, 0);
+    thrust.applyQuaternion(droneState.quaternion);
+    thrust.multiplyScalar(thrustMag / physicsConfig.mass);
+
+    // 3. 更新速度與位置
+    // 加速度 = 推力 - 重力
+    const acceleration = new THREE.Vector3(0, -physicsConfig.gravity, 0).add(thrust);
+    
+    droneState.velocity.add(acceleration.multiplyScalar(dt));
+    
+    // 空氣阻力
+    droneState.velocity.multiplyScalar(physicsConfig.drag);
+    
+    // 更新位置
+    const moveStep = droneState.velocity.clone().multiplyScalar(dt);
+    droneState.position.add(moveStep);
+
+    // 地面碰撞檢測 (簡單版)
+    if (droneState.position.y < 0.5) {
+        droneState.position.y = 0.5;
+        droneState.velocity.y = 0;
+        // 觸地摩擦力
+        droneState.velocity.x *= 0.9;
+        droneState.velocity.z *= 0.9;
+    }
+
+    droneGroup.position.copy(droneState.position);
+
+    // 4. 更新螺旋槳動畫
+    const propSpeed = 0.5 + Math.abs(throttleFactor) * 1.5;
+    props.forEach(p => p.rotation.y += propSpeed);
+
+    // 5. 更新車輛位置
+    cars.forEach(car => {
+        const move = car.userData.dir.clone().multiplyScalar(car.userData.speed * dt);
+        car.position.add(move);
+        // 如果車子開太遠，重置位置
+        if (Math.abs(car.position.x) > 500 || Math.abs(car.position.z) > 500) {
+            car.position.x *= -0.99; // 簡單的從另一邊出來
+            car.position.z *= -0.99;
+        }
+    });
+
+    // 6. 更新 UI 與音效
+    updateOSD();
+    updateRadar();
+    updateAudio();
+
+    // 7. 渲染畫面
+    renderer.render(scene, camera);
+}
+
+function onWindowResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+// 啟動應用
+init();
+
+</script>
+</body>
+</html>
